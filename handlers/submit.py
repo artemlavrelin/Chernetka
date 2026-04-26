@@ -14,7 +14,7 @@ from keyboards.main_kb import main_keyboard
 from keyboards.moderation_kb import submission_moderation_keyboard
 from services.user_service import get_or_create_user, is_user_banned
 from services.task_service import create_submission
-from config import ADMIN_GROUP_ID
+from config import ADMIN_GROUP_IDS
 
 router = Router()
 logger = logging.getLogger(__name__)
