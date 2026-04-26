@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-ADMIN_GROUP_ID: int = int(os.getenv("ADMIN_GROUP_ID", "-1003654223457"))
+ADMIN_GROUP_IDS = list(map(int, os.getenv("ADMIN_GROUP_ID").split(",")))
 CHANNEL_ID: int = int(os.getenv("CHANNEL_ID", "-1003033694255"))
 THREADS_URL: str = os.getenv(
     "THREADS_URL",
