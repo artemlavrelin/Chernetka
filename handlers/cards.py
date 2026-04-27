@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto, InputMediaAudio
 from aiogram.fsm.context import FSMContext
@@ -38,9 +39,6 @@ def _build_card_caption(card: dict, artist_id: Optional[int] = None) -> str:
         f"{author_str}{link_str}"
     )
 
-
-# Импорт typing
-from typing import Optional
 
 
 @router.callback_query(F.data == "cards_browse")
