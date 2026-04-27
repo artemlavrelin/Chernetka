@@ -5,15 +5,14 @@ from aiogram.fsm.context import FSMContext
 
 from states import SubmitStates
 from keyboards.submit_kb import (
-    content_type_keyboard,
-    ask_description_keyboard,
-    ask_link_keyboard,
-    publication_mode_keyboard,
+    content_type_keyboard, ask_description_keyboard,
+    ask_link_keyboard, publication_mode_keyboard,
 )
 from keyboards.main_kb import main_keyboard
 from keyboards.moderation_kb import submission_moderation_keyboard
-from services.user_service import get_or_create_user, is_user_banned
+from services.user_service import get_or_create_user, is_user_banned, get_balance
 from services.task_service import create_submission
+from services.cooldown_service import check_cooldown, set_cooldown
 from config import ADMIN_GROUP_ID
 
 router = Router()
@@ -26,29 +25,33 @@ CONTENT_TYPE_NAMES = {
 }
 
 
-# ─── Вход в сабмишн ────────────────────────────────────────────────────────
-
 @router.callback_query(F.data == "submit_work")
 async def start_submit(callback: CallbackQuery, state: FSMContext):
-    if await is_user_banned(callback.from_user.id):
+    uid = callback.from_user.id
+    if await is_user_banned(uid):
         await callback.answer("🚫 Вы заблокированы.", show_alert=True)
         return
+    ready, remaining = await check_cooldown(uid, "submission")
+    if not ready:
+        h, m = remaining // 3600, (remaining % 3600) // 60
+        await callback.answer(
+            f"⏳ Следующая заявка доступна через {h}ч {m}м", show_alert=True
+        )
+        return
+    balance = await get_balance(uid)
     await state.set_state(SubmitStates.select_type)
     await callback.message.edit_text(
-        "📤 Выбери тип работы:",
+        f"📤 Выбери тип работы:\n\nBalance: {balance}🌟",
         reply_markup=content_type_keyboard(),
     )
     await callback.answer()
 
 
-# ─── Шаг 1: Тип контента ──────────────────────────────────────────────────
-
 @router.callback_query(SubmitStates.select_type, F.data.startswith("stype_"))
 async def select_content_type(callback: CallbackQuery, state: FSMContext):
-    ctype = callback.data.split("_")[1]  # text / image / audio
+    ctype = callback.data.split("_")[1]
     await state.update_data(content_type=ctype)
     await state.set_state(SubmitStates.send_content)
-
     prompts = {
         "text":  "✏️ Отправь свой текст (стихотворение, эссе и т.д.):",
         "image": "🖼 Отправь изображение (арт, фото):",
@@ -58,22 +61,17 @@ async def select_content_type(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ─── Шаг 2: Контент ───────────────────────────────────────────────────────
-
 @router.message(SubmitStates.send_content)
 async def receive_content(message: Message, state: FSMContext):
     data = await state.get_data()
     ctype = data.get("content_type")
-
-    content = None
-    file_id = None
+    content, file_id = None, None
 
     if ctype == "text":
         if not message.text:
             await message.answer("❗ Пожалуйста, отправь текст сообщением.")
             return
         content = message.text
-
     elif ctype == "image":
         if message.photo:
             file_id = message.photo[-1].file_id
@@ -82,7 +80,6 @@ async def receive_content(message: Message, state: FSMContext):
         else:
             await message.answer("❗ Пожалуйста, отправь изображение.")
             return
-
     elif ctype == "audio":
         if message.audio:
             file_id = message.audio.file_id
@@ -101,8 +98,6 @@ async def receive_content(message: Message, state: FSMContext):
         reply_markup=ask_description_keyboard(),
     )
 
-
-# ─── Шаг 3: Описание ──────────────────────────────────────────────────────
 
 @router.callback_query(SubmitStates.ask_desc, F.data == "sub_add_desc")
 async def prompt_description(callback: CallbackQuery, state: FSMContext):
@@ -127,12 +122,10 @@ async def receive_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(SubmitStates.ask_link)
     await message.answer(
-        "🔗 Хочешь добавить ссылку на оригинал (YouTube, SoundCloud, Instagram и т.д.)?",
+        "🔗 Хочешь добавить ссылку на оригинал?",
         reply_markup=ask_link_keyboard(),
     )
 
-
-# ─── Шаг 4: Ссылка на оригинал ────────────────────────────────────────────
 
 @router.callback_query(SubmitStates.ask_link, F.data == "sub_add_link")
 async def prompt_link(callback: CallbackQuery, state: FSMContext):
@@ -156,13 +149,8 @@ async def skip_link(callback: CallbackQuery, state: FSMContext):
 async def receive_link(message: Message, state: FSMContext):
     await state.update_data(original_link=message.text)
     await state.set_state(SubmitStates.select_mode)
-    await message.answer(
-        "👤 Как опубликовать работу?",
-        reply_markup=publication_mode_keyboard(),
-    )
+    await message.answer("👤 Как опубликовать работу?", reply_markup=publication_mode_keyboard())
 
-
-# ─── Шаг 5: Режим публикации → сохранение и отправка в модерацию ──────────
 
 @router.callback_query(SubmitStates.select_mode, F.data.in_({"sub_mode_anon", "sub_mode_public"}))
 async def select_publication_mode(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -171,8 +159,7 @@ async def select_publication_mode(callback: CallbackQuery, state: FSMContext, bo
     await state.clear()
 
     user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
-
-    submission_id = await create_submission(
+    submission_id, public_id = await create_submission(
         user_id=user["id"],
         content_type=data.get("content_type"),
         content=data.get("content"),
@@ -181,31 +168,29 @@ async def select_publication_mode(callback: CallbackQuery, state: FSMContext, bo
         original_link=data.get("original_link"),
         publication_mode=mode,
     )
+    # Устанавливаем кулдаун 6 часов
+    await set_cooldown(user["id"], "submission")
 
     await callback.message.edit_text(
-        "✅ Заявка отправлена на рассмотрение!\n\n"
+        f"✅ Заявка #{public_id} отправлена на рассмотрение!\n\n"
         "Мы свяжемся с тобой, если работа будет принята.",
         reply_markup=main_keyboard(),
     )
     await callback.answer()
-
-    # Отправляем в группу модерации
-    await _send_to_moderation(bot, submission_id, user, data, mode)
+    await _send_to_moderation(bot, submission_id, public_id, user, data, mode)
 
 
-async def _send_to_moderation(bot: Bot, submission_id: int, user: dict, data: dict, mode: str):
+async def _send_to_moderation(
+    bot: Bot, submission_id: int, public_id: int, user: dict, data: dict, mode: str
+):
     ctype = data.get("content_type", "unknown")
     description = data.get("description") or "—"
     original_link = data.get("original_link") or "—"
     username_display = f"@{user['username']}" if user.get("username") else f"ID: {user['id']}"
-
-    if mode == "anonymous":
-        pub_mode_text = "🕶 Анонимно"
-    else:
-        pub_mode_text = f"👤 {username_display}"
+    pub_mode_text = "🕶 Анонимно" if mode == "anonymous" else f"👤 {username_display}"
 
     header = (
-        f"📥 НОВАЯ ЗАЯВКА\n\n"
+        f"📥 НОВАЯ ЗАЯВКА #{public_id}\n\n"
         f"Тип: {CONTENT_TYPE_NAMES.get(ctype, ctype)}\n"
         f"ID: {user['id']}\n"
         f"Username: {username_display}\n\n"
@@ -213,33 +198,19 @@ async def _send_to_moderation(bot: Bot, submission_id: int, user: dict, data: di
         f"🔗 Оригинал:\n{original_link}\n\n"
         f"👤 Режим публикации: {pub_mode_text}"
     )
-
     kb = submission_moderation_keyboard(submission_id)
-
     try:
         if ctype == "text":
             text_content = data.get("content", "")
             full = f"{header}\n\n📝 Содержание:\n{text_content}"
-            # Telegram limit 4096
             if len(full) > 4096:
                 await bot.send_message(ADMIN_GROUP_ID, header, reply_markup=kb)
                 await bot.send_message(ADMIN_GROUP_ID, f"📝 Содержание:\n{text_content[:3500]}…")
             else:
                 await bot.send_message(ADMIN_GROUP_ID, full, reply_markup=kb)
-
         elif ctype == "image":
-            await bot.send_photo(
-                ADMIN_GROUP_ID,
-                photo=data.get("file_id"),
-                caption=header,
-                reply_markup=kb,
-            )
+            await bot.send_photo(ADMIN_GROUP_ID, photo=data.get("file_id"), caption=header, reply_markup=kb)
         elif ctype == "audio":
-            await bot.send_audio(
-                ADMIN_GROUP_ID,
-                audio=data.get("file_id"),
-                caption=header,
-                reply_markup=kb,
-            )
+            await bot.send_audio(ADMIN_GROUP_ID, audio=data.get("file_id"), caption=header, reply_markup=kb)
     except Exception as e:
         logger.error("Failed to send submission to moderation: %s", e)

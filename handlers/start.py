@@ -24,7 +24,11 @@ async def cmd_start(message: Message, state: FSMContext):
     if user["is_banned"]:
         await message.answer("🚫 Вы заблокированы в этом боте.")
         return
-    await message.answer(START_TEXT, reply_markup=main_keyboard())
+    balance = user["balance"]
+    await message.answer(
+        f"{START_TEXT}\n\nBalance: {balance}🌟",
+        reply_markup=main_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "main_menu")
@@ -34,5 +38,8 @@ async def back_to_main(callback: CallbackQuery, state: FSMContext):
     if user["is_banned"]:
         await callback.answer("🚫 Вы заблокированы.", show_alert=True)
         return
-    await callback.message.edit_text(START_TEXT, reply_markup=main_keyboard())
+    await callback.message.edit_text(
+        f"{START_TEXT}\n\nBalance: {user['balance']}🌟",
+        reply_markup=main_keyboard(),
+    )
     await callback.answer()
