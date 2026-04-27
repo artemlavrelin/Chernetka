@@ -10,11 +10,21 @@ THREADS_URL: str = os.getenv(
     "THREADS_URL",
     "https://www.threads.com/@chernovikspace?igshid=NTc4MTIwNjQ2YQ=="
 )
+THREADS_POST_URL: str = os.getenv("THREADS_POST_URL", "")
 
-# Начальный баланс нового пользователя
+# Список ID администраторов (ADMIN_IDS=111222,333444 в ENV)
+_raw_admin_ids = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS: list[int] = [
+    int(x.strip()) for x in _raw_admin_ids.split(",") if x.strip().isdigit()
+]
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+
 STARTING_BALANCE: int = 2
 
-# Стоимость создания задания и награда исполнителю (за 1 слот)
 TASK_CONFIG: dict = {
     "like":    {"cost": 2,  "reward": 1},
     "comment": {"cost": 8,  "reward": 6},
@@ -22,18 +32,17 @@ TASK_CONFIG: dict = {
     "follow":  {"cost": 10, "reward": 7},
 }
 
-# Кулдауны в секундах
 COOLDOWNS: dict = {
-    "like":    600,    # 10 минут
-    "comment": 3600,   # 60 минут
-    "repost":  10800,  # 180 минут
-    "follow":  7200,   # 120 минут
-    "execute": 1200,   # 20 минут (выполнение заданий)
-    "create":  21600,  # 6 часов  (создание задания)
-    "report":  21600,  # 6 часов  (жалобы)
+    "like":       600,
+    "comment":    3600,
+    "repost":     10800,
+    "follow":     7200,
+    "execute":    1200,
+    "create":     21600,
+    "report":     21600,
+    "submission": 21600,
 }
 
-# Дневные лимиты
 DAILY_LIMITS: dict = {
     "like":    20,
     "comment": 15,
@@ -41,7 +50,6 @@ DAILY_LIMITS: dict = {
     "follow":  15,
 }
 
-# Эмодзи типов заданий
 TASK_EMOJI: dict = {
     "like":    "👍",
     "comment": "✍️",
@@ -49,4 +57,12 @@ TASK_EMOJI: dict = {
     "follow":  "👉",
 }
 
+CARD_EMOJIS: list[str] = [
+    "🎆", "🎇", "🌅", "🌌", "🌁", "🌆", "🌠", "🌃",
+    "🎑", "🏞️", "🗾", "🌄", "🏙️", "🌇", "🌉",
+]
+
 DB_PATH: str = "chernovik.db"
+
+# Глобальный флаг остановки Pull (меняется через /pullstop / /pullstart)
+PULL_ENABLED: bool = True
