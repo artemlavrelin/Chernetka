@@ -1,14 +1,7 @@
 from .states import (
-    SubmitStates,
-    PullStates,
-    CreateTaskStates,
-    ExecuteTaskStates,
-    ModerationStates,
-    VerificationStates,
-    ReportStates,
-    AdminStates,
-    CardBrowseStates,
-    AddCardStates,
+    SubmitStates, PullStates, CreateTaskStates, ExecuteTaskStates,
+    ModerationStates, VerificationStates, ReportStates, AdminStates,
+    CardBrowseStates, AddCardStates,
 )
 
 __all__ = [

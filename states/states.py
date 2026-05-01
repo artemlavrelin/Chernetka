@@ -20,7 +20,7 @@ class CreateTaskStates(StatesGroup):
     enter_url            = State()
     enter_description    = State()
     enter_slots          = State()
-    enter_comment_texts  = State()   # сбор текстов комментариев по одному
+    enter_comment_texts  = State()
     confirm              = State()
 
 
@@ -52,9 +52,15 @@ class CardBrowseStates(StatesGroup):
 
 
 class AddCardStates(StatesGroup):
-    enter_post_url   = State()
-    enter_file       = State()
-    enter_desc       = State()
-    enter_category   = State()
-    enter_author_id  = State()
-    confirm          = State()
+    # Шаг 1 — источник
+    enter_post_url  = State()
+    # Шаг 2 — предпросмотр (после авто-парсинга)
+    preview         = State()
+    # Шаг 3a — ручное редактирование медиа
+    edit_file       = State()
+    # Шаг 3b — ручное редактирование описания
+    edit_desc       = State()
+    # Шаг 4 — категория
+    enter_category  = State()
+    # Шаг 5 — artist_id
+    enter_author_id = State()
