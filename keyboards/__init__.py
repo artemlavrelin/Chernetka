@@ -12,4 +12,10 @@ from .moderation_kb import (
     submission_moderation_keyboard, execution_moderation_keyboard,
     verification_moderation_keyboard,
 )
-from .cards_kb import card_keyboard, card_author_filter_keyboard
+from .cards_kb import (
+    card_keyboard, card_author_filter_keyboard,
+    adm_addcard_source_kb, adm_addcard_preview_kb,
+    adm_addcard_edit_choose_kb, adm_addcard_skip_kb,
+    adm_addcard_category_kb, adm_addcard_author_kb,
+    adm_panel_kb,
+)
