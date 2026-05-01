@@ -90,3 +90,30 @@ def adm_panel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="↩️ Готово", callback_data="adm_done")],
     ])
+
+
+# ── Клавиатуры для AddArtist / EditArtist FSM ────────────────────────────────
+
+def adm_artist_skip_kb(back_cb: str = "adm_artist_cancel") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➡️ Пропустить", callback_data="adm_artist_skip")],
+        [InlineKeyboardButton(text="↩️ Назад",       callback_data=back_cb)],
+    ])
+
+
+def adm_editartist_choose_kb() -> InlineKeyboardMarkup:
+    """Выбор поля для редактирования артиста."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Ссылка",    callback_data="adm_ea_field_link")],
+        [InlineKeyboardButton(text="🆔 Display ID", callback_data="adm_ea_field_did")],
+        [InlineKeyboardButton(text="👤 @Username",  callback_data="adm_ea_field_uname")],
+        [InlineKeyboardButton(text="↩️ Отмена",     callback_data="adm_artist_cancel")],
+    ])
+
+
+def adm_editartist_field_kb() -> InlineKeyboardMarkup:
+    """Кнопки под полем при редактировании."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Очистить поле", callback_data="adm_ea_clear")],
+        [InlineKeyboardButton(text="↩️ Назад",          callback_data="adm_ea_back_choose")],
+    ])
