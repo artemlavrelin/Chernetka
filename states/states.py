@@ -52,15 +52,22 @@ class CardBrowseStates(StatesGroup):
 
 
 class AddCardStates(StatesGroup):
-    # Шаг 1 — источник
     enter_post_url  = State()
-    # Шаг 2 — предпросмотр (после авто-парсинга)
     preview         = State()
-    # Шаг 3a — ручное редактирование медиа
     edit_file       = State()
-    # Шаг 3b — ручное редактирование описания
     edit_desc       = State()
-    # Шаг 4 — категория
     enter_category  = State()
-    # Шаг 5 — artist_id
     enter_author_id = State()
+
+
+class AddArtistStates(StatesGroup):
+    enter_link       = State()   # 1) ссылка
+    enter_display_id = State()   # 2) #id1727
+    enter_username   = State()   # 3) @username
+
+
+class EditArtistStates(StatesGroup):
+    choose_field     = State()   # выбор поля
+    enter_link       = State()
+    enter_display_id = State()
+    enter_username   = State()
