@@ -164,13 +164,30 @@ async def init_db() -> None:
 
             -- ── Авторы ────────────────────────────────────────────────────
             CREATE TABLE IF NOT EXISTS artists (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id    INTEGER UNIQUE,
-                artist_id  INTEGER UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER UNIQUE,
+                artist_id    INTEGER UNIQUE NOT NULL,
+                display_id   TEXT,
+                link         TEXT,
+                tg_username  TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         await db.commit()
+
+        # Миграция: добавляем новые колонки если их нет
+        for col, typedef in [
+            ("display_id",  "TEXT"),
+            ("link",        "TEXT"),
+            ("tg_username", "TEXT"),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE artists ADD COLUMN {col} {typedef}")
+                await db.commit()
+                logger.info("Migrated artists: added column %s", col)
+            except Exception:
+                pass
+
     logger.info("Database initialised")
 
 
