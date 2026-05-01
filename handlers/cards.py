@@ -17,19 +17,21 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 
-from states import CardBrowseStates, AddCardStates
+from states import CardBrowseStates, AddCardStates, AddArtistStates, EditArtistStates
 from keyboards.cards_kb import (
     card_keyboard, card_author_filter_keyboard,
     adm_addcard_source_kb, adm_addcard_preview_kb,
     adm_addcard_edit_choose_kb, adm_addcard_skip_kb,
     adm_addcard_category_kb, adm_addcard_author_kb,
     adm_panel_kb,
+    adm_artist_skip_kb, adm_editartist_choose_kb, adm_editartist_field_kb,
 )
 from keyboards.main_kb import main_keyboard
 from services.user_service import is_user_banned, get_or_create_user
 from services.card_service import (
     get_active_cards, get_card, vote_card, report_card,
-    get_artist_by_id, get_artist_by_user,
+    get_artist_by_id, get_artist_by_user, get_artist_by_db_id,
+    update_artist_fields,
     create_card, set_priority, get_priority_cards,
     get_card_stats, add_artist, change_artist_id, remove_artist,
 )
@@ -43,18 +45,32 @@ logger = logging.getLogger(__name__)
 #  УТИЛИТЫ
 # ════════════════════════════════════════════════════════
 
-def _build_card_caption(card: dict, artist_id: Optional[int] = None) -> str:
+def _build_card_caption(card: dict, artist: Optional[dict] = None) -> str:
     """Строит подпись карточки без баланса."""
     import random
     from config import CARD_EMOJIS
-    emoji     = card.get("emoji") or random.choice(CARD_EMOJIS)
-    pub_id    = card.get("public_id", "?")
-    rating    = card.get("rating", 0)
-    category  = card.get("category") or "—"
-    desc      = card.get("description") or ""
-    post_url  = card.get("post_url") or ""
-    author_str = f"Автор: id{artist_id}" if artist_id else "Автор: —"
-    link_str   = f"\n🔗 {post_url}" if post_url else ""
+    emoji    = card.get("emoji") or random.choice(CARD_EMOJIS)
+    pub_id   = card.get("public_id", "?")
+    rating   = card.get("rating", 0)
+    category = card.get("category") or "—"
+    desc     = card.get("description") or ""
+    post_url = card.get("post_url") or ""
+
+    if artist:
+        did      = artist.get("display_id") or f"id{artist['artist_id']}"
+        uname    = artist.get("tg_username")
+        alink    = artist.get("link")
+        # Если есть ссылка — делаем кликабельный текст через HTML
+        if alink:
+            author_str = f'Автор: <a href="{alink}">{did}</a>'
+        elif uname:
+            author_str = f"Автор: {did} (@{uname.lstrip('@')})"
+        else:
+            author_str = f"Автор: {did}"
+    else:
+        author_str = "Автор: —"
+
+    link_str = f"\n🔗 {post_url}" if post_url else ""
     return (
         f"{emoji} {pub_id} ♥️{rating} #️⃣{category}\n"
         f"{desc}\n"
@@ -64,11 +80,11 @@ def _build_card_caption(card: dict, artist_id: Optional[int] = None) -> str:
 
 async def _show_card(msg: Message, card: dict, edit: bool = False) -> None:
     """Отображает карточку пользователю (без баланса)."""
-    artist = (
-        await get_artist_by_id(card["author_id"])
+    artist  = (
+        await get_artist_by_db_id(card["author_id"])
         if card.get("author_id") else None
     )
-    caption  = _build_card_caption(card, artist["artist_id"] if artist else None)
+    caption  = _build_card_caption(card, artist)
     kb       = card_keyboard(card["id"])
     file_id  = card.get("file_id")
     ftype    = card.get("file_type", "photo")
@@ -225,12 +241,20 @@ async def card_author_info(callback: CallbackQuery):
     if not card or not card.get("author_id"):
         await callback.answer("Автор неизвестен.", show_alert=True)
         return
-    artist = await get_artist_by_id(card["author_id"])
+    artist = await get_artist_by_db_id(card["author_id"])
     if not artist:
         await callback.answer("Автор не найден.", show_alert=True)
         return
+    did   = artist.get("display_id") or f"id{artist['artist_id']}"
+    uname = artist.get("tg_username")
+    alink = artist.get("link")
+    parts = [f"💫 Автор: {did}"]
+    if uname:
+        parts.append(f"@{uname.lstrip('@')}")
+    if alink:
+        parts.append(f"🔗 {alink}")
     await callback.message.reply(
-        f"💫 Автор: id{artist['artist_id']}",
+        "\n".join(parts),
         reply_markup=card_author_filter_keyboard(artist["artist_id"]),
     )
     await callback.answer()
@@ -684,41 +708,288 @@ async def cmd_remove_priority(message: Message):
 
 
 # ════════════════════════════════════════════════════════
-#  АДМИН — авторы
+#  АДМИН — /addartistid  (FSM)
 # ════════════════════════════════════════════════════════
 
+def _artist_info_text(artist: dict) -> str:
+    did   = artist.get("display_id") or f"id{artist['artist_id']}"
+    uname = artist.get("tg_username") or "—"
+    link  = artist.get("link") or "—"
+    return (
+        f"🎨 АРТИСТ\n\n"
+        f"Числовой ID: {artist['artist_id']}\n"
+        f"Display ID:  {did}\n"
+        f"@Username:   {uname}\n"
+        f"Ссылка:      {link}"
+    )
+
+
 @router.message(F.text == "/addartistid", F.chat.id == ADMIN_GROUP_ID)
-async def cmd_addartistid(message: Message):
+async def cmd_addartistid(message: Message, state: FSMContext):
     uid      = message.from_user.id
     existing = await get_artist_by_user(uid)
     if existing:
         await message.reply(
-            f"У вас уже есть artist_id: {existing['artist_id']}\n"
-            f"Используй /changeartistid чтобы изменить.",
+            f"У вас уже есть профиль артиста:\n{_artist_info_text(existing)}\n\n"
+            f"Используй /editartist чтобы изменить поля.",
             reply_markup=adm_panel_kb(),
         )
         return
-    aid = await add_artist(uid)
-    await message.reply(f"✅ Ваш artist_id: {aid}", reply_markup=adm_panel_kb())
+    await state.clear()
+    await state.set_state(AddArtistStates.enter_link)
+    await message.reply(
+        "🎨 СОЗДАНИЕ ПРОФИЛЯ АРТИСТА\n\n"
+        "Шаг 1/3 — 🔗 Введи ссылку на свой профиль\n"
+        "(Threads, Instagram, SoundCloud и т.д.)\n\n"
+        "Или пропусти:",
+        reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
+    )
 
 
-@router.message(F.text.startswith("/changeartistid "), F.chat.id == ADMIN_GROUP_ID)
-async def cmd_changeartistid(message: Message):
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
-        await message.reply("Использование: /changeartistid <old_id> <new_id>")
-        return
-    ok = await change_artist_id(int(parts[1]), int(parts[2]))
-    if ok:
+# ── Шаг 1: ссылка ────────────────────────────────────────
+
+@router.callback_query(AddArtistStates.enter_link, F.data == "adm_artist_skip")
+async def addartist_skip_link(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(link=None)
+    await state.set_state(AddArtistStates.enter_display_id)
+    await callback.message.edit_text(
+        "Шаг 2/3 — 🆔 Введи свой Display ID\n"
+        "(например: #id1727)\n\n"
+        "Или пропусти:",
+        reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
+    )
+    await callback.answer()
+
+
+@router.message(AddArtistStates.enter_link, F.chat.id == ADMIN_GROUP_ID)
+async def addartist_receive_link(message: Message, state: FSMContext):
+    link = (message.text or "").strip()
+    if not link.startswith("http") and not link.startswith("@"):
         await message.reply(
-            f"✅ artist_id {parts[1]} → {parts[2]}",
-            reply_markup=adm_panel_kb(),
+            "❗ Введи корректную ссылку (https://...) или нажми «Пропустить».",
+            reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
         )
-    else:
-        await message.reply("❌ Ошибка: ID уже занят или не существует.")
+        return
+    await state.update_data(link=link)
+    await state.set_state(AddArtistStates.enter_display_id)
+    await message.reply(
+        "Шаг 2/3 — 🆔 Введи свой Display ID\n"
+        "(например: #id1727)\n\n"
+        "Или пропусти:",
+        reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
+    )
 
+
+# ── Шаг 2: display_id ────────────────────────────────────
+
+@router.callback_query(AddArtistStates.enter_display_id, F.data == "adm_artist_skip")
+async def addartist_skip_did(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(display_id=None)
+    await state.set_state(AddArtistStates.enter_username)
+    await callback.message.edit_text(
+        "Шаг 3/3 — 👤 Введи свой @username\n\n"
+        "Или пропусти:",
+        reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
+    )
+    await callback.answer()
+
+
+@router.message(AddArtistStates.enter_display_id, F.chat.id == ADMIN_GROUP_ID)
+async def addartist_receive_did(message: Message, state: FSMContext):
+    did = (message.text or "").strip()
+    if not did:
+        await message.reply("❗ Введи Display ID или нажми «Пропустить».",
+                            reply_markup=adm_artist_skip_kb("adm_artist_cancel"))
+        return
+    await state.update_data(display_id=did)
+    await state.set_state(AddArtistStates.enter_username)
+    await message.reply(
+        "Шаг 3/3 — 👤 Введи свой @username\n\n"
+        "Или пропусти:",
+        reply_markup=adm_artist_skip_kb("adm_artist_cancel"),
+    )
+
+
+# ── Шаг 3: username → сохранение ─────────────────────────
+
+@router.callback_query(AddArtistStates.enter_username, F.data == "adm_artist_skip")
+async def addartist_skip_uname(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(tg_username=None)
+    await _save_new_artist(callback.message, state, callback.from_user.id)
+    await callback.answer()
+
+
+@router.message(AddArtistStates.enter_username, F.chat.id == ADMIN_GROUP_ID)
+async def addartist_receive_uname(message: Message, state: FSMContext):
+    uname = (message.text or "").strip().lstrip("@")
+    await state.update_data(tg_username=uname or None)
+    await _save_new_artist(message, state, message.from_user.id)
+
+
+async def _save_new_artist(msg: Message, state: FSMContext, user_id: int):
+    data   = await state.get_data()
+    await state.clear()
+    artist = await add_artist(
+        user_id     = user_id,
+        link        = data.get("link"),
+        display_id  = data.get("display_id"),
+        tg_username = data.get("tg_username"),
+    )
+    await msg.reply(
+        f"✅ Профиль артиста создан!\n\n{_artist_info_text(artist)}",
+        reply_markup=adm_panel_kb(),
+    )
+
+
+# ── Отмена AddArtist ─────────────────────────────────────
+
+@router.callback_query(
+    F.data == "adm_artist_cancel",
+    F.message.chat.id == ADMIN_GROUP_ID,
+)
+async def addartist_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Отменено.")
+    await callback.answer()
+
+
+# ════════════════════════════════════════════════════════
+#  АДМИН — /editartist  (FSM редактирования полей)
+# ════════════════════════════════════════════════════════
+
+@router.message(F.text == "/editartist", F.chat.id == ADMIN_GROUP_ID)
+async def cmd_editartist(message: Message, state: FSMContext):
+    uid    = message.from_user.id
+    artist = await get_artist_by_user(uid)
+    if not artist:
+        await message.reply(
+            "❌ У вас нет профиля артиста.\nИспользуй /addartistid чтобы создать."
+        )
+        return
+    await state.clear()
+    await state.set_state(EditArtistStates.choose_field)
+    await message.reply(
+        f"✏️ РЕДАКТИРОВАНИЕ ПРОФИЛЯ АРТИСТА\n\n"
+        f"{_artist_info_text(artist)}\n\n"
+        f"Выбери поле для изменения:",
+        reply_markup=adm_editartist_choose_kb(),
+    )
+
+
+# ── Выбор поля ────────────────────────────────────────────
+
+@router.callback_query(EditArtistStates.choose_field, F.data == "adm_ea_field_link")
+async def ea_field_link(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(editing_field="link")
+    await state.set_state(EditArtistStates.enter_link)
+    await callback.message.edit_text(
+        "🔗 Введи новую ссылку\nили нажми «Очистить поле»:",
+        reply_markup=adm_editartist_field_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(EditArtistStates.choose_field, F.data == "adm_ea_field_did")
+async def ea_field_did(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(editing_field="display_id")
+    await state.set_state(EditArtistStates.enter_display_id)
+    await callback.message.edit_text(
+        "🆔 Введи новый Display ID (например: #id1727)\n"
+        "или нажми «Очистить поле»:",
+        reply_markup=adm_editartist_field_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(EditArtistStates.choose_field, F.data == "adm_ea_field_uname")
+async def ea_field_uname(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(editing_field="tg_username")
+    await state.set_state(EditArtistStates.enter_username)
+    await callback.message.edit_text(
+        "👤 Введи новый @username\nили нажми «Очистить поле»:",
+        reply_markup=adm_editartist_field_kb(),
+    )
+    await callback.answer()
+
+
+# ── Назад к выбору поля ───────────────────────────────────
+
+@router.callback_query(F.data == "adm_ea_back_choose", F.message.chat.id == ADMIN_GROUP_ID)
+async def ea_back_choose(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditArtistStates.choose_field)
+    artist = await get_artist_by_user(callback.from_user.id)
+    await callback.message.edit_text(
+        f"✏️ РЕДАКТИРОВАНИЕ ПРОФИЛЯ АРТИСТА\n\n"
+        f"{_artist_info_text(artist)}\n\n"
+        f"Выбери поле для изменения:",
+        reply_markup=adm_editartist_choose_kb(),
+    )
+    await callback.answer()
+
+
+# ── Очистить поле ─────────────────────────────────────────
+
+@router.callback_query(F.data == "adm_ea_clear", F.message.chat.id == ADMIN_GROUP_ID)
+async def ea_clear_field(callback: CallbackQuery, state: FSMContext):
+    data  = await state.get_data()
+    field = data.get("editing_field", "")
+    uid   = callback.from_user.id
+    kwargs = {f"clear_{field}": True} if field in ("link", "display_id", "tg_username") else {}
+    artist = await update_artist_fields(uid, **kwargs)
+    await state.set_state(EditArtistStates.choose_field)
+    await callback.message.edit_text(
+        f"✅ Поле очищено.\n\n{_artist_info_text(artist)}\n\n"
+        f"Выбери поле для изменения:",
+        reply_markup=adm_editartist_choose_kb(),
+    )
+    await callback.answer()
+
+
+# ── Приём нового значения ─────────────────────────────────
+
+async def _ea_apply_and_back(message: Message, state: FSMContext, **update_kwargs):
+    """Применяет обновление и возвращает к выбору поля."""
+    artist = await update_artist_fields(message.from_user.id, **update_kwargs)
+    await state.set_state(EditArtistStates.choose_field)
+    await message.reply(
+        f"✅ Сохранено.\n\n{_artist_info_text(artist)}\n\n"
+        f"Выбери поле для изменения:",
+        reply_markup=adm_editartist_choose_kb(),
+    )
+
+
+@router.message(EditArtistStates.enter_link, F.chat.id == ADMIN_GROUP_ID)
+async def ea_receive_link(message: Message, state: FSMContext):
+    link = (message.text or "").strip()
+    if not link.startswith("http") and not link.startswith("@"):
+        await message.reply("❗ Введи корректную ссылку (https://...).",
+                            reply_markup=adm_editartist_field_kb())
+        return
+    await _ea_apply_and_back(message, state, link=link)
+
+
+@router.message(EditArtistStates.enter_display_id, F.chat.id == ADMIN_GROUP_ID)
+async def ea_receive_did(message: Message, state: FSMContext):
+    did = (message.text or "").strip()
+    if not did:
+        await message.reply("❗ Введи Display ID.", reply_markup=adm_editartist_field_kb())
+        return
+    await _ea_apply_and_back(message, state, display_id=did)
+
+
+@router.message(EditArtistStates.enter_username, F.chat.id == ADMIN_GROUP_ID)
+async def ea_receive_uname(message: Message, state: FSMContext):
+    uname = (message.text or "").strip().lstrip("@")
+    if not uname:
+        await message.reply("❗ Введи @username.", reply_markup=adm_editartist_field_kb())
+        return
+    await _ea_apply_and_back(message, state, tg_username=uname)
+
+
+# ── /removeartistid ───────────────────────────────────────
 
 @router.message(F.text == "/removeartistid", F.chat.id == ADMIN_GROUP_ID)
-async def cmd_removeartistid(message: Message):
+async def cmd_removeartistid(message: Message, state: FSMContext):
+    await state.clear()
     await remove_artist(message.from_user.id)
-    await message.reply("✅ artist_id удалён.", reply_markup=adm_panel_kb())
+    await message.reply("✅ Профиль артиста удалён.", reply_markup=adm_panel_kb())
