@@ -9,17 +9,32 @@ logger = logging.getLogger(__name__)
 
 # ── Авторы ──────────────────────────────────────────────────────────────────
 
-async def add_artist(user_id: int) -> int:
-    """Добавляет автора с уникальным artist_id (1-9999). Возвращает artist_id."""
+async def add_artist(
+    user_id: int,
+    link: Optional[str] = None,
+    display_id: Optional[str] = None,
+    tg_username: Optional[str] = None,
+) -> dict:
+    """
+    Создаёт артиста с уникальным числовым artist_id (1-9999).
+    display_id — произвольный текстовый ID (напр. '#id1727').
+    Возвращает полную запись dict.
+    """
     async with get_db() as db:
         for _ in range(200):
             aid = random.randint(1, 9999)
             try:
                 await db.execute(
-                    "INSERT INTO artists (user_id, artist_id) VALUES (?, ?)", (user_id, aid)
+                    """INSERT INTO artists (user_id, artist_id, display_id, link, tg_username)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (user_id, aid, display_id, link, tg_username)
                 )
                 await db.commit()
-                return aid
+                async with db.execute(
+                    "SELECT * FROM artists WHERE user_id = ?", (user_id,)
+                ) as cur:
+                    row = await cur.fetchone()
+                return dict(row)
             except Exception:
                 continue
     raise RuntimeError("Не удалось сгенерировать artist_id")
@@ -35,12 +50,64 @@ async def get_artist_by_user(user_id: int) -> Optional[dict]:
 
 
 async def get_artist_by_id(artist_id: int) -> Optional[dict]:
+    """Поиск по числовому artist_id (внутренний уникальный номер)."""
     async with get_db() as db:
         async with db.execute(
             "SELECT * FROM artists WHERE artist_id = ?", (artist_id,)
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def get_artist_by_db_id(db_id: int) -> Optional[dict]:
+    """Поиск по первичному ключу artists.id."""
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT * FROM artists WHERE id = ?", (db_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def update_artist_fields(
+    user_id: int,
+    link: Optional[str]       = None,
+    display_id: Optional[str] = None,
+    tg_username: Optional[str]= None,
+    clear_link: bool          = False,
+    clear_display_id: bool    = False,
+    clear_tg_username: bool   = False,
+) -> Optional[dict]:
+    """
+    Обновляет указанные поля артиста.
+    Если передан clear_* = True, поле обнуляется.
+    """
+    updates = []
+    values  = []
+    if link is not None:
+        updates.append("link = ?");        values.append(link)
+    elif clear_link:
+        updates.append("link = NULL")
+    if display_id is not None:
+        updates.append("display_id = ?"); values.append(display_id)
+    elif clear_display_id:
+        updates.append("display_id = NULL")
+    if tg_username is not None:
+        updates.append("tg_username = ?"); values.append(tg_username)
+    elif clear_tg_username:
+        updates.append("tg_username = NULL")
+
+    if not updates:
+        return await get_artist_by_user(user_id)
+
+    values.append(user_id)
+    async with get_db() as db:
+        await db.execute(
+            f"UPDATE artists SET {', '.join(updates)} WHERE user_id = ?",
+            values,
+        )
+        await db.commit()
+    return await get_artist_by_user(user_id)
 
 
 async def change_artist_id(old_id: int, new_id: int) -> bool:
