@@ -8,20 +8,34 @@ from states import PullStates
 from keyboards.promotion_kb import (
     promotion_menu_keyboard, task_card_keyboard, pull_empty_keyboard,
 )
+from services.task_service import get_user_active_tasks
+from services.cooldown_service import get_cooldown_status
 from services.user_service import is_user_banned, get_balance
 from services.task_service import get_available_tasks, get_task
-from config import TASK_EMOJI
+from config import TASK_EMOJI, DAILY_LIMITS
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-PROMOTION_TEXT = (
-    "📈 ПУЛ ПРОДВИЖЕНИЯ\n\n"
-    "Здесь ты выполняешь задания других и получаешь 🌟\n"
-    "за 🌟 создаёшь свои задания и продвигаешь посты\n\n"
-    "как это работает: выполнил → получил 🌟 → запустил своё продвижение\n\n"
-    "📌 Типы: 📱 Pull  👍 Like  ✍️ Comment  🤝 Repost  👉 Follow"
-)
+async def _build_promo_text(user_id: int) -> str:
+    tasks   = await get_user_active_tasks(user_id)
+    s       = await get_cooldown_status(user_id)
+    balance = await get_balance(user_id)
+    tasks_lines = "".join(
+        f"\n  • ID {t['id']} · {t['task_type'].capitalize()} · {t['remaining_slots']}/{t['total_slots']} слотов"
+        for t in tasks[:5]
+    )
+    return (
+        f"📈 ПРОДВИЖЕНИЕ\n\n"
+        f"🌟: {balance}\n\n"
+        f"📅 Дневные лимиты:\n"
+        f"  Like: {s['like_today']}/{DAILY_LIMITS['like']}  "
+        f"Comment: {s['comment_today']}/{DAILY_LIMITS['comment']}\n"
+        f"  Repost: {s['repost_today']}/{DAILY_LIMITS['repost']}  "
+        f"Follow: {s['follow_today']}/{DAILY_LIMITS['follow']}\n\n"
+        f"📌 Активных заданий: {len(tasks)}"
+        f"{tasks_lines}"
+    )
 
 
 def _detect_platform(url: str) -> str:
@@ -58,11 +72,8 @@ async def promotion_menu(callback: CallbackQuery, state: FSMContext):
     if await is_user_banned(callback.from_user.id):
         await callback.answer("🚫 Вы заблокированы.", show_alert=True)
         return
-    balance = await get_balance(callback.from_user.id)
-    await callback.message.edit_text(
-        f"{PROMOTION_TEXT}\n\nBalance: {balance}🌟",
-        reply_markup=promotion_menu_keyboard(),
-    )
+    text = await _build_promo_text(callback.from_user.id)
+    await callback.message.edit_text(text, reply_markup=promotion_menu_keyboard())
     await callback.answer()
 
 
