@@ -158,6 +158,7 @@ async def init_db() -> None:
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 card_id    INTEGER NOT NULL,
                 user_id    INTEGER NOT NULL,
+                reason     TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (card_id) REFERENCES cards(id)
             );
@@ -187,6 +188,13 @@ async def init_db() -> None:
                 logger.info("Migrated artists: added column %s", col)
             except Exception:
                 pass
+
+        # Миграция card_reports — добавляем reason
+        try:
+            await db.execute("ALTER TABLE card_reports ADD COLUMN reason TEXT")
+            await db.commit()
+        except Exception:
+            pass
 
     logger.info("Database initialised")
 
